@@ -62,7 +62,6 @@ rule trimmomatic:
         account = "SBSANDME_LAB"
     shell:
         """
-        module load trimmomatic/0.39
 
         java -jar {TRIMMOMATIC_JAR} PE \
         -threads {threads} -phred33 \
@@ -72,7 +71,6 @@ rule trimmomatic:
         SLIDINGWINDOW:{config[params][trimmomatic][sliding_window]} \
         MINLEN:{config[params][trimmomatic][min_length]}
 
-        module unload trimmomatic/0.39
         """
 
 # Rule 2: HISAT2 alignment
