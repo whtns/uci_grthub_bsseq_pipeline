@@ -39,7 +39,9 @@ rule all:
         expand(f"{HISAT2_PATH}/{{sample}}_align_sorted.bam.bai", sample=SAMPLES),
         expand(f"{FEATURE_COUNT_PATH}/{{sample}}_counts.txt", sample=SAMPLES),
         # Salmon quantification
-        expand(f"{SALMON_PATH}/{{sample}}_salmon_quant/{{sample}}_quant.sf", sample=SAMPLES)
+        expand(f"{SALMON_PATH}/{{sample}}_salmon_quant/{{sample}}_quant.sf", sample=SAMPLES),
+        # MultiQC report
+        "multiqc_report.html"
 
 # Rule 1: Trimming with Trimmomatic
 rule trimmomatic:
@@ -153,6 +155,7 @@ rule feature_counts:
         module unload subread/2.0.1
         """
 
+
 # Rule 5: Salmon quantification
 rule salmon_quant:
     input:
@@ -183,4 +186,26 @@ rule salmon_quant:
         mv {params.temp_quant} {output.quant}
         
         module unload salmon/1.2.1
+        """
+
+
+# Rule 6: MultiQC report
+rule multiqc:
+    input:
+        expand(f"{TRIMMED_PATH}/{{sample}}_trimmed_1P.fq.gz", sample=SAMPLES),
+        expand(f"{TRIMMED_PATH}/{{sample}}_trimmed_2P.fq.gz", sample=SAMPLES),
+        expand(f"{HISAT2_PATH}/{{sample}}_align_sorted.bam", sample=SAMPLES),
+        expand(f"{FEATURE_COUNT_PATH}/{{sample}}_counts.txt", sample=SAMPLES),
+        expand(f"{SALMON_PATH}/{{sample}}_salmon_quant/{{sample}}_quant.sf", sample=SAMPLES)
+    output:
+        report = "multiqc_report.html"
+    threads: 2
+    resources:
+        mem_mb = 4000,
+        cpus = 2,
+        partition = "standard",
+        account = "SBSANDME_LAB"
+    shell:
+        """
+        singularity run /dfs9/ucightf-lab/kstachel/TOOLS/multiqc-1.20.sif multiqc . -o .
         """
