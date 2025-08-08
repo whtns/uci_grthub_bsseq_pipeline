@@ -31,6 +31,9 @@ TRIMMOMATIC_JAR = config["tools"]["trimmomatic"]
 # Rule all - defines final outputs
 rule all:
     input:
+        # FastQC reports
+        expand(f"fastqc/{{sample}}_r1_fastqc.html", sample=SAMPLES),
+        expand(f"fastqc/{{sample}}_r2_fastqc.html", sample=SAMPLES),
         # Trimmed files
         expand(f"{TRIMMED_PATH}/{{sample}}_trimmed_1P.fq.gz", sample=SAMPLES),
         expand(f"{TRIMMED_PATH}/{{sample}}_trimmed_2P.fq.gz", sample=SAMPLES),
@@ -42,6 +45,27 @@ rule all:
         expand(f"{SALMON_PATH}/{{sample}}_salmon_quant/{{sample}}_quant.sf", sample=SAMPLES),
         # MultiQC report
         "multiqc_report.html"
+
+# Rule 0: FastQC on raw FASTQ files
+rule fastqc:
+    input:
+        r1 = f"{DATA_PATH}/{{sample}}_r1.fq.gz",
+        r2 = f"{DATA_PATH}/{{sample}}_r2.fq.gz"
+    output:
+        r1_html = f"fastqc/{{sample}}_r1_fastqc.html",
+        r1_zip = f"fastqc/{{sample}}_r1_fastqc.zip",
+        r2_html = f"fastqc/{{sample}}_r2_fastqc.html",
+        r2_zip = f"fastqc/{{sample}}_r2_fastqc.zip"
+    threads: 2
+    resources:
+        mem_mb = 4000,
+        cpus = 2,
+        partition = "standard",
+        account = "sbsandme_lab"
+    shell:
+        """
+        singularity run /path/to/fastqc.sif fastqc -o fastqc -t {threads} {input.r1} {input.r2}
+        """
 
 # Rule 1: Trimming with Trimmomatic
 rule trimmomatic:
@@ -61,7 +85,7 @@ rule trimmomatic:
         mem_mb = 4000,
         cpus = config["params"]["cpus"],
         partition = "standard",
-        account = "SBSANDME_LAB"
+        account = "sbsandme_lab"
     shell:
         """
 
@@ -91,7 +115,7 @@ rule hisat2_align:
         mem_mb = 24000,
         cpus = config["params"]["cpus"],
         partition = "standard",
-        account = "SBSANDME_LAB"
+        account = "sbsandme_lab"
     shell:
         """
         module load hisat2/2.2.1
@@ -119,7 +143,7 @@ rule sort_bam:
         mem_mb = 24000,
         cpus = config["params"]["cpus"],
         partition = "standard",
-        account = "SBSANDME_LAB"
+        account = "sbsandme_lab"
     shell:
         """
         module load samtools/1.10
@@ -143,7 +167,7 @@ rule feature_counts:
         mem_mb = 24000,
         cpus = config["params"]["cpus"],
         partition = "standard",
-        account = "SBSANDME_LAB"
+        account = "sbsandme_lab"
     shell:
         """
         module load subread/2.0.1
@@ -172,7 +196,7 @@ rule salmon_quant:
         mem_mb = 24000,
         cpus = config["params"]["cpus"],
         partition = "standard",
-        account = "SBSANDME_LAB"
+        account = "sbsandme_lab"
     shell:
         """
         module load salmon/1.2.1
@@ -204,7 +228,7 @@ rule multiqc:
         mem_mb = 4000,
         cpus = 2,
         partition = "standard",
-        account = "SBSANDME_LAB"
+        account = "sbsandme_lab"
     shell:
         """
         singularity run /dfs9/ucightf-lab/kstachel/TOOLS/multiqc-1.20.sif multiqc . -o .
