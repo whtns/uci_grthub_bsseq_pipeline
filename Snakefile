@@ -1,3 +1,14 @@
+EMAIL = "kstachel@uci.edu"
+
+onstart:
+   shell("mail -s 'STARTED' {EMAIL} < {log}")
+
+onsuccess:
+   shell("mail -s 'DONE' {EMAIL} < {log}")
+
+onerror:
+   shell("mail -s 'ERROR' {EMAIL} < {log}")
+
 # Snakemake workflow for RNA-seq analysis
 # Generalized to process multiple samples from a data directory
 
@@ -13,6 +24,7 @@ TRIMMED_PATH = config["paths"]["trimmed"]
 HISAT2_PATH = config["paths"]["hisat2"]
 ALIGNMENT_SUMMARY_PATH = config["paths"]["alignment_summary"]
 FEATURE_COUNT_PATH = config["paths"]["feature_count"]
+DESEQ2_PATH = config["paths"]["deseq2"]
 SALMON_PATH = config["paths"]["salmon"]
 
 # Get sample names from FASTQ files in data directory
@@ -40,11 +52,13 @@ rule all:
         # HISAT2 alignment and counting
         expand(f"{HISAT2_PATH}/{{sample}}_align_sorted.bam", sample=SAMPLES),
         expand(f"{HISAT2_PATH}/{{sample}}_align_sorted.bam.bai", sample=SAMPLES),
-        expand(f"{FEATURE_COUNT_PATH}/{{sample}}_counts.txt", sample=SAMPLES),
+        f"{FEATURE_COUNT_PATH}/all_samples_counts.txt",
         # Salmon quantification
         expand(f"{SALMON_PATH}/{{sample}}_salmon_quant/{{sample}}_quant.sf", sample=SAMPLES),
         # MultiQC report
-        "multiqc_report.html"
+        "multiqc_report.html",
+        # DESeq2 results
+        f"{DESEQ2_PATH}/deseq2_results.csv"
 
 # Rule 0: FastQC on raw FASTQ files
 rule fastqc:
@@ -64,7 +78,10 @@ rule fastqc:
         account = "sbsandme_lab"
     shell:
         """
-        singularity run /path/to/fastqc.sif fastqc -o fastqc -t {threads} {input.r1} {input.r2}
+        module load fastqc/0.11.9
+        mkdir -p fastqc
+        fastqc -o fastqc -t {threads} {input.r1} {input.r2}
+        module unload fastqc/0.11.9
         """
 
 # Rule 1: Trimming with Trimmomatic
@@ -154,28 +171,27 @@ rule sort_bam:
         module unload samtools/1.10
         """
 
-# Rule 4: Feature counting
-rule feature_counts:
+
+# Rule 4: Feature counting (all samples together)
+rule feature_counts_all:
     input:
-        bam = f"{HISAT2_PATH}/{{sample}}_align_sorted.bam"
+        bam_files = expand(f"{HISAT2_PATH}/{{sample}}_align_sorted.bam", sample=SAMPLES)
     output:
-        counts = f"{FEATURE_COUNT_PATH}/{{sample}}_counts.txt"
+        counts = f"{FEATURE_COUNT_PATH}/all_samples_counts.txt"
     params:
         gtf_path = GTF_PATH
     threads: 4
     resources:
         mem_mb = 24000,
-        cpus = config["params"]["cpus"],
+        cpus = 4,
         partition = "standard",
         account = "sbsandme_lab"
     shell:
         """
         module load subread/2.0.1
-        
         featureCounts -s {config[params][feature_counts][strandness]} -p -t exon -g gene_id -T {threads} \
         -a {params.gtf_path} \
-        -o {output.counts} {input.bam}
-        
+        -o {output.counts} {input.bam_files}
         module unload subread/2.0.1
         """
 
@@ -199,7 +215,7 @@ rule salmon_quant:
         account = "sbsandme_lab"
     shell:
         """
-        module load salmon/1.2.1
+        module load salmon/1.8.0
         
         salmon quant -i {params.salmon_index} -l {config[params][salmon][library_type]} \
         -1 {input.r1} -2 {input.r2} \
@@ -209,7 +225,7 @@ rule salmon_quant:
         # Rename the quant.sf file
         mv {params.temp_quant} {output.quant}
         
-        module unload salmon/1.2.1
+        module unload salmon/1.8.0
         """
 
 
@@ -231,5 +247,30 @@ rule multiqc:
         account = "sbsandme_lab"
     shell:
         """
+        module load singularity/3.11.3
         singularity run /dfs9/ucightf-lab/kstachel/TOOLS/multiqc-1.20.sif multiqc . -o .
+        module unload singularity/3.11.3
+        """
+    
+# Rule 7: DESeq2 differential expression analysis
+rule deseq2:
+    input:
+        counts = f"{FEATURE_COUNT_PATH}/all_samples_counts.txt",
+        metadata = config["deseq2"]["metadata"]
+    output:
+        results = f"{DESEQ2_PATH}/deseq2_results.csv",
+        rds = f"{DESEQ2_PATH}/dds.rds"
+    params:
+        out_dir = f"{DESEQ2_PATH}"
+    threads: 1
+    resources:
+        mem_mb = 8000,
+        cpus = 1,
+        partition = "standard",
+        account = "sbsandme_lab"
+    shell:
+        """
+        module load R/4.2.2
+        Rscript deseq2_analysis.R {input.counts} {input.metadata} {params.out_dir}
+        module unload R/4.2.2
         """

@@ -88,3 +88,9 @@ The workflow generates:
 1. Check SLURM job status: `squeue -u $USER`
 2. View workflow status: `snakemake --summary`
 3. Check individual rule logs in the SLURM output files
+
+
+# TODO
+1. retrieve counts from featureCounts and Salmon quantification files, and summarize them in a final report
+2. Run DESeq2 or edgeR for differential expression analysis
+3. 

@@ -1,0 +1,8 @@
+*.html
+.snakemake/*
+data/
+fastqc/
+logs/
+multiqc_data/
+results/
+

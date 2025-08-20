@@ -7,14 +7,15 @@ paths:
   hisat2: "results/hisat2_alignment"
   alignment_summary: "results/hisat2_alignment/alignment_summary"
   feature_count: "results/feature_count"
+  deseq2: "results/deseq2"
   salmon: "results/salmon_quant"
 
 # Reference files
 references:
   adapters: "/dfs9/ucightf-lab/kstachel/TOOLS/Trimmomatic-0.39/adapters/TruSeq3-PE-2.fa"
-  hisat2_index: "/dfs8/commondata/hisat2/grch38_snp_tran/genome_snp_tran"
-  gtf: "/dfs8/commondata/hisat2/grch38_snp_tran/Homo_sapiens.GRCh38.84.gtf"
-  salmon_index: "/pub/linc13/ref/human_ref/salmon/v1.1.0/GRCh38/GRCh38_v33_salmon_index"
+  hisat2_index: "/dfs8/commondata/hisat2/references/grch38_snp_tran/genome_snp_tran"
+  gtf: "/dfs8/commondata/hisat2/references/grch38_snp_tran/Homo_sapiens.GRCh38.84.gtf"
+  salmon_index: "/dfs9/ucightf-lab/projects/REFERENCES/human/Salmon/GRCh38_v33_salmon_index"
 
 # Tool paths
 tools:
@@ -33,3 +34,6 @@ params:
   feature_counts:
     strandness: 2  # For stranded libraries (first read reverse)
   cpus: 8
+
+deseq2:
+  metadata: "metadata.csv"
