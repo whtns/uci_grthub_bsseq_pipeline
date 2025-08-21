@@ -1,19 +1,27 @@
-# RNA-seq Analysis Snakemake Workflow
+# RNAseq_Pipeline
 
-This Snakemake workflow has been converted from the original SLURM batch script `test.sub` and performs RNA-seq analysis including:
+This directory contains a Snakemake workflow for processing bulk RNA-seq data. The pipeline automates quality control, trimming, alignment, quantification, and summarization for multiple samples.
 
-1. **Trimming** with Trimmomatic
-2. **Alignment** with HISAT2
-3. **Sorting and indexing** BAM files with samtools
-4. **Feature counting** with featureCounts
-5. **Quantification** with Salmon
+## Workflow Steps
 
-## Files Created
+1. **FastQC**: Quality control of raw FASTQ files.
+2. **Trimmomatic**: Adapter and quality trimming of reads.
+3. **HISAT2**: Alignment of trimmed reads to a reference genome.
+4. **Samtools**: Sorting and indexing of BAM files.
+5. **featureCounts**: Gene-level quantification for all samples (single matrix output).
+6. **Salmon**: Transcript-level quantification.
+7. **MultiQC**: Aggregated report of QC and quantification results.
 
-- `Snakefile` - Main workflow definition
-- `config.yaml` - Configuration file with paths and parameters
-- `cluster.yaml` - SLURM cluster configuration
-- `submit_snakemake.sh` - Script to submit the workflow to SLURM
+## Directory Structure
+- `Snakefile`: Main workflow definition.
+- `config.yaml`: Configuration file with paths and parameters.
+- `submit_snakemake.sh`: Script to submit the workflow to a cluster.
+- `data/`: Raw FASTQ files and related data.
+- `fastqc/`: FastQC output files.
+- `logs/`: Log files for each step.
+- `results/`: Processed data outputs (feature counts, alignments, quantifications).
+- `multiqc_data/`: MultiQC intermediate files.
+- `multiqc_report.html`: Final MultiQC report.
 
 ## Usage
 
@@ -26,8 +34,7 @@ conda install -c conda-forge -c bioconda snakemake
 ```
 
 ### 2. Configuration
-
-Edit `config.yaml` to modify:
+ Edit `config.yaml` to set paths and parameters for your data and references.
 - Sample names
 - Input/output paths
 - Reference file locations
@@ -56,6 +63,22 @@ Generate a workflow diagram:
 ```bash
 snakemake --dag | dot -Tpng > workflow.png
 ```
+### 5. Output
+1. **FastQC**: Quality control reports in `fastqc/`.
+3. **Results**: Outputs will be found in the `results/` and other specified directories. The main featureCounts output is `results/feature_count/all_samples_counts.txt`.
+
+## Requirements
+- Snakemake
+- Modules: fastqc, trimmomatic, hisat2, samtools, subread, salmon, singularity
+- Cluster environment (recommended)
+
+## Customization
+- Adjust sample detection, references, and tool parameters in `config.yaml`.
+- Modify `cluster.yaml` for resource allocation.
+
+### For different library types:
+- **Non-stranded libraries**: Change `rna_strandness` to "unstranded" and `library_type` to "IU" in `config.yaml`
+- **Different strand orientation**: Modify the strandness parameters accordingly
 
 ## Key Differences from Original Script
 
@@ -66,31 +89,16 @@ snakemake --dag | dot -Tpng > workflow.png
 5. **Resource management**: Better integration with SLURM scheduler
 6. **Reproducibility**: Workflow tracks input/output dependencies
 
-## Customization
-
-### For different library types:
-- **Non-stranded libraries**: Change `rna_strandness` to "unstranded" and `library_type` to "IU" in `config.yaml`
-- **Different strand orientation**: Modify the strandness parameters accordingly
-
-### For multiple samples:
-Modify the workflow to accept a samples list and use wildcards for processing multiple samples in parallel.
-
-## Output Files
-
-The workflow generates:
-- Trimmed FASTQ files (`*_trimmed_1P.fq.gz`, `*_trimmed_2P.fq.gz`)
-- Aligned BAM files (`*_align_sorted.bam`)
-- Feature count tables (`*_counts.txt`)
-- Salmon quantification files (`*_quant.sf`)
-
 ## Troubleshooting
 
 1. Check SLURM job status: `squeue -u $USER`
 2. View workflow status: `snakemake --summary`
 3. Check individual rule logs in the SLURM output files
 
-
 # TODO
 1. retrieve counts from featureCounts and Salmon quantification files, and summarize them in a final report
 2. Run DESeq2 or edgeR for differential expression analysis
-3. 
+
+
+## Contact
+For questions or issues, contact: kstachel@uci.edu
