@@ -1,0 +1,25 @@
+library("iSEEde")
+library("DESeq2")
+library("iSEE")
+library(glue)
+
+# Load the DESeq2 results object
+airway <- readRDS("dds.rds")
+
+# Parameters for group comparison
+condition <- "{DESEQ2_CONDITION}"
+group_a <- "{GROUP_A}"
+group_b <- "{GROUP_B}"
+
+# Create contrast name from parameters
+contrast_name <- glue::glue("{condition}: {group_a} vs {group_b}")
+
+
+iSEE(airway, initial = list(
+  DETable(ContrastName=contrast_name, HiddenColumns = c("baseMean", 
+    "lfcSE", "stat"), PanelWidth = 4L),
+  VolcanoPlot(ContrastName=contrast_name, PanelWidth = 4L),
+  MAPlot(ContrastName=contrast_name, PanelWidth = 4L)
+))
+
+# shiny::runApp(app)

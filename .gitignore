@@ -5,4 +5,6 @@ fastqc/
 logs/
 multiqc_data/
 results/
-
+output/
+*.rds
+*.csv

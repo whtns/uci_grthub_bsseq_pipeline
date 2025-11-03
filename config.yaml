@@ -2,13 +2,13 @@
 
 # Input/Output paths
 paths:
-  data: "/dfs9/ucightf-lab/test_Data"  # Directory containing FASTQ files with pattern {sample}_R1_001.fastq.gz and {sample}_R2_001.fastq.gz
-  trimmed: "results/trimmed_fastq"
-  hisat2: "results/hisat2_alignment"
-  alignment_summary: "results/hisat2_alignment/alignment_summary"
-  feature_count: "results/feature_count"
-  deseq2: "results/deseq2"
-  salmon: "results/salmon_quant"
+  data: "/dfs9/ucightf-lab/kstachel/test_Data"  # Directory containing FASTQ files with pattern {sample}_R1_001.fastq.gz and {sample}_R2_001.fastq.gz
+  trimmed: "output/trimmed_fastq"
+  hisat2: "output/hisat2_alignment"
+  alignment_summary: "output/hisat2_alignment/alignment_summary"
+  feature_count: "output/feature_count"
+  deseq2: "output/deseq2"
+  salmon: "output/salmon_quant"
 
 # Reference files
 references:
@@ -37,3 +37,9 @@ params:
 
 deseq2:
   metadata: "metadata.csv"
+
+# iSEE App configuration
+isee_app:
+  condition: "dex"
+  group_a: "ALS"    # First group for comparison
+  group_b: "CTR"    # Second group for comparison

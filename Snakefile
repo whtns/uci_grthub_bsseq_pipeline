@@ -58,7 +58,9 @@ rule all:
         # MultiQC report
         "multiqc_report.html",
         # DESeq2 results
-        f"{DESEQ2_PATH}/deseq2_results.csv"
+        f"{DESEQ2_PATH}/deseq2_results.csv",
+        # iSEE app2.R file
+        "isee_uci/shiny-server/test_app/app.R"
 
 # Rule 0: FastQC on raw FASTQ files
 rule fastqc:
@@ -261,7 +263,10 @@ rule deseq2:
         results = f"{DESEQ2_PATH}/deseq2_results.csv",
         rds = f"{DESEQ2_PATH}/dds.rds"
     params:
-        out_dir = f"{DESEQ2_PATH}"
+        out_dir = f"{DESEQ2_PATH}",
+        deseq2_condition = config["isee_app"]["condition"],
+        group_a = config["isee_app"]["group_a"],
+        group_b = config["isee_app"]["group_b"]
     threads: 1
     resources:
         mem_mb = 8000,
@@ -271,6 +276,31 @@ rule deseq2:
     shell:
         """
         module load R/4.2.2
-        Rscript deseq2_analysis.R {input.counts} {input.metadata} {params.out_dir}
+        Rscript deseq2_analysis.R {input.counts} {input.metadata} \
+        {params.out_dir} {params.deseq2_condition} {params.group_a} {params.group_b}
         module unload R/4.2.2
+        cp {output.rds} isee_uci/shiny-server/test_app/dds.rds
+        """
+
+# Rule 8: Generate parametric iSEE app2.R file
+rule generate_isee_app:
+    input:
+        template = "templates/app.R.template",
+        dds = f"{DESEQ2_PATH}/dds.rds"
+    output:
+        app = "isee_uci/shiny-server/test_app/app.R"
+    params:
+        deseq2_condition = config["isee_app"]["condition"],
+        group_a = config["isee_app"]["group_a"],
+        group_b = config["isee_app"]["group_b"]
+    shell:
+        """
+        # Create the output directory if it doesn't exist
+        mkdir -p $(dirname {output.app})
+        
+        # Replace placeholders in template with actual parameters
+        sed -e 's|{{DESEQ2_CONDITION}}|{params.deseq2_condition}|g' \
+            -e 's|{{GROUP_A}}|{params.group_a}|g' \
+            -e 's|{{GROUP_B}}|{params.group_b}|g' \
+            {input.template} > {output.app}
         """

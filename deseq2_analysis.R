@@ -5,14 +5,18 @@
 suppressPackageStartupMessages({
   library(DESeq2)
   library(tidyverse)
+  library(glue)
 })
 
 args <- commandArgs(trailingOnly=TRUE)
-if(length(args) < 3) stop("Usage: Rscript deseq2_analysis.R counts.txt metadata.csv output_dir")
+if(length(args) < 3) stop("Usage: Rscript deseq2_analysis.R counts.txt metadata.csv output_dir condition group_a group_b")
 
 counts_file <- args[1]
 meta_file <- args[2]
 out_dir <- args[3]
+condition <- args[4]  # Condition column in metadata
+group_a <- args[5]  # First group for comparison
+group_b <- args[6]  # Second group for comparison
 
 dir.create(out_dir, showWarnings=FALSE)
 
@@ -46,7 +50,11 @@ dds <- DESeqDataSetFromMatrix(countData=count_matrix,
 
 dds <- DESeq(dds)
 
+res <- results(dds)
+
+dds <- embedContrastResults(res, dds, name = glue("{condition}: {group_a} vs {group_b}")
+contrastResults(dds)
+
 saveRDS(dds, file=file.path(out_dir, "dds.rds"))
 
-res <- results(dds)
 write.csv(as.data.frame(res), file=file.path(out_dir, "deseq2_results.csv"))
