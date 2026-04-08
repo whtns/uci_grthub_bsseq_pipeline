@@ -1,104 +1,132 @@
-# RNAseq_Pipeline
+# WGBS Snakemake Workflow
 
-This directory contains a Snakemake workflow for processing bulk RNA-seq data. The pipeline automates quality control, trimming, alignment, quantification, and summarization for multiple samples.
+This workflow is designed to run the basic steps for a whole-genome bisulfite 
+sequencing experiment. It's intended to automate the workflow for future-use and
+reproducibility. Its design is explicitly simple to make it easy for users to not
+only understand the order and purpose of each step, but to be able to look at the
+code, figure out how it works and get it running extremely easily.
 
-## Workflow Steps
+One advantage of running this through Snakemake is that it intelligently handles
+threading and replaces completed processes up to the number of cores specified
+at run-time. However, options for the thread count for each step are configurable
+in the .yaml file.
 
-1. **FastQC**: Quality control of raw FASTQ files.
-2. **Trimmomatic**: Adapter and quality trimming of reads.
-3. **HISAT2**: Alignment of trimmed reads to a reference genome.
-4. **Samtools**: Sorting and indexing of BAM files.
-5. **featureCounts**: Gene-level quantification for all samples (single matrix output).
-6. **Salmon**: Transcript-level quantification.
-7. **MultiQC**: Aggregated report of QC and quantification results.
+## Dependencies
+Most recent tested versions indicated. Though, more recent versions and slightly
+older ones are likely a-okay!
 
-## Directory Structure
-- `Snakefile`: Main workflow definition.
-- `config.yaml`: Configuration file with paths and parameters.
-- `submit_snakemake.sh`: Script to submit the workflow to a cluster.
-- `data/`: Raw FASTQ files and related data.
-- `fastqc/`: FastQC output files.
-- `logs/`: Log files for each step.
-- `results/`: Processed data outputs (feature counts, alignments, quantifications).
-- `multiqc_data/`: MultiQC intermediate files.
-- `multiqc_report.html`: Final MultiQC report.
+1. [Trim Galore!](https://www.bioinformatics.babraham.ac.uk/projects/trim_galore/) v0.6.4
+2. [FastQC](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/) v0.11.8
+3. [bwa-meth](https://github.com/brentp/bwa-meth) v0.2.2
+4. [samtools](https://www.htslib.org/) v1.9
+5. [Picard Tools](https://broadinstitute.github.io/picard/) v2.22.3
+6. [MethylDackel](https://github.com/dpryan79/MethylDackel) v0.4
+7. [Mosdepth](https://github.com/brentp/mosdepth) v0.2.9
+8. [Snakemake](https://snakemake.readthedocs.io) v5.14.0
+9. [Python3](https://www.python.org/) v3.5
 
-## Usage
+## Quick-Start Guide
+Firstly, download all the dependencies and make sure they're in your $PATH (that
+you can run them from a BASH prompt). Then clone the github repo:
 
-### 1. Prerequisites
-
-Make sure you have Snakemake installed. You can install it using conda:
-
-```bash
-conda install -c conda-forge -c bioconda snakemake
+```shell
+git clone https://github.com/groverj3/wgbs_snakemake.git
 ```
 
-### 2. Configuration
- Edit `config.yaml` to set paths and parameters for your data and references.
-- Sample names
-- Input/output paths
-- Reference file locations
-- Tool parameters
+Edit the config.yaml file to include your sample IDs (fastq filenames,
+excluding extensions, pair numbers, lane info, etc.) and a reference genome
+(which may be pre-indexed). You'll definitely want to make sure that the adapter
+sequence in there matches what's in your samples.
 
-### 3. Running the workflow
+Currently, the workflow expects an R1 and R2 file for each sample. Place the
+individual .fastq.gz files for R1 and R2 into the input_data directory. Once
+you have all the required dependencies installed run the workflow with:
 
-#### Option A: Submit to SLURM cluster
-```bash
-sbatch submit_snakemake.sh
+```shell
+snakemake --cores {cores_here}
 ```
 
-#### Option B: Run locally (for testing)
-```bash
-snakemake --cores 8 --use-conda
+## Configuration: output directory and FASTQ locations
+
+This workflow now supports a top-level output directory that centralizes all
+generated files. Set it in `config.yaml` with the key `output_dir`. If not set,
+the workflow defaults to `output` and will create directories such as
+`output/trimmed`, `output/1_fastqc_raw`, `output/3_aligned_sorted_markdupes`,
+etc.
+
+Example `config.yaml` fragment:
+
+```yaml
+output_dir: "output"
+paths:
+    fastqs: "data/FASTQ"  # optional; where to look for FASTQ files
+# other keys...
 ```
 
-#### Option C: Dry run (to check workflow)
-```bash
-snakemake --dry-run
+Notes:
+- The Snakefile will look for FASTQs in `paths.fastqs`, then `paths.data`, and
+    finally a default `data/FASTQ` directory. You can change that by editing
+    `config.yaml`.
+- To inspect what Snakemake will do without running commands, use a dry-run:
+
+```shell
+snakemake -n -p --cores {cores_here}
 ```
 
-### 4. Workflow visualization
 
-Generate a workflow diagram:
-```bash
-snakemake --dag | dot -Tpng > workflow.png
-```
-### 5. Output
-1. **FastQC**: Quality control reports in `fastqc/`.
-3. **Results**: Outputs will be found in the `results/` and other specified directories. The main featureCounts output is `results/feature_count/all_samples_counts.txt`.
+## Workflow
+1. Index the reference genome with bwameth and samtools faidx
+2. Quality checking, and output of sample information with FastQC
+3. Adapter and quality trimming with Trim Galore!
+4. Alignment to a reference genome with bwa-meth
+5. Marking PCR duplicates with Picard Tools MarkDuplicates
+6. Detecting methylation bias per read position with MethylDackel
+7. Extracting methylation calls per position into bedGraph and methylKit formats with MethylDackel
+8. Calculating depth and coverage with Mosdepth
 
-## Requirements
-- Snakemake
-- Modules: fastqc, trimmomatic, hisat2, samtools, subread, salmon, singularity
-- Cluster environment (recommended)
+The output from the workflow is suitable for DMR-calling or aggregation of calls
+to determine % methylation per feature.
 
-## Customization
-- Adjust sample detection, references, and tool parameters in `config.yaml`.
-- Modify `cluster.yaml` for resource allocation.
+![DAG](dag.png)
 
-### For different library types:
-- **Non-stranded libraries**: Change `rna_strandness` to "unstranded" and `library_type` to "IU" in `config.yaml`
-- **Different strand orientation**: Modify the strandness parameters accordingly
+## All About the Workflow
 
-## Key Differences from Original Script
+Whole-genome bisulfite sequencing is a modification of whole-genome shotgun
+sequencing designed to convert unmethylated cytosines into uracil. These uracils
+are then sequenced as thymine. By tallying up the number of cytosines and
+thymines for each cytosine in the reference genome you can then calculate a
+percentage methylation for each annotated cytosine in your species' reference
+assembly.
 
-1. **Modular design**: Each step is a separate rule
-2. **Dependency management**: Snakemake automatically handles job dependencies
-3. **Parallel execution**: Multiple samples can be processed simultaneously
-4. **Configuration-driven**: Easy to modify parameters without editing the main workflow
-5. **Resource management**: Better integration with SLURM scheduler
-6. **Reproducibility**: Workflow tracks input/output dependencies
+While it is possible to determine this by calling C -> T SNPs against a reference
+there is purpose-built software for this task. The most common aligner for WGBS
+is currently [Bismark](https://www.bioinformatics.babraham.ac.uk/projects/bismark/),
+and in our testing it performed well. However, we decided to use a slightly
+different pipeline for the purposes of our work in the
+[Mosher Lab](https://cals.arizona.edu/research/mosherlab/Mosher_Lab/Home.html).
+The pipeline we settled on is a combination of open source tools built around
+bwameth for alignment and MethylDackel for methylation calling. In our experience
+this pipeline was many times faster and resulted in a marginally higher mapping
+rate. Additionally, it uses Picard Tools to mark potential PCR duplicates, and
+its method for doing so is not as conservative as Bismark's internal version of
+the same process. Bismark's speed has improved in more recent versions, and is
+under more active development but bwameth still produces comparable results in
+less time.
 
-## Troubleshooting
+Use of MethylDackel allows us to determine per-position biases in terms of
+methylation calls on the reads, and different ones based on read orientation.
+Using some shell script hacking we can extract its recommendations for inclusion
+bounds for methylation calling based on these biases and use in the methylation
+calling step. This should reduce false positive or negatives based on effects of
+cytosines being too close to adapters, interference from end-repair, or simply
+incomplete trimming.
 
-1. Check SLURM job status: `squeue -u $USER`
-2. View workflow status: `snakemake --summary`
-3. Check individual rule logs in the SLURM output files
+At the conclusion of the pipeline overall fold-coverage is calculated using the
+very fast Mosdepth tool from Brent Pedersen and some python scripts.
 
-# TODO
-1. retrieve counts from featureCounts and Salmon quantification files, and summarize them in a final report
-2. Run DESeq2 or edgeR for differential expression analysis
+## Citing the Workflow
+Please do cite us! The included Zenodo DOI is the easiest way. Additionally, you
+should consider citing the paper in which we first used this workflow:
 
-
-## Contact
-For questions or issues, contact: kstachel@uci.edu
+Grover JW *et al*. Abundant expression of maternal siRNAs is a conserved feature of seed development. 2020.
+PNAS. https://doi.org/10.1073/pnas.2001332117

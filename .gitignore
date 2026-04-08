@@ -8,3 +8,11 @@ results/
 output/
 *.rds
 *.csv
+*.fastq
+*.bam
+*.out
+*.err
+output_ks/
+output_melisa/
+*.fa
+*.txt

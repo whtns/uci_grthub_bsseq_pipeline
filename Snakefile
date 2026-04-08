@@ -1,306 +1,507 @@
-EMAIL = "kstachel@uci.edu"
+# Author: Jeffrey Grover
+# Purpose: Run the whole-genome bisulfite sequencing workflow
+# Created: 2019-05-22
 
-onstart:
-   shell("mail -s 'STARTED' {EMAIL} < {log}")
 
-onsuccess:
-   shell("mail -s 'DONE' {EMAIL} < {log}")
+# Get overall workflow parameters from config.yaml
+configfile: 'config.yaml'
 
-onerror:
-   shell("mail -s 'ERROR' {EMAIL} < {log}")
+# SAMPLES = config['samples']
+REFERENCE_GENOME = config['reference_genome']
+# Base output directory (can be set in config.yaml as `output_dir: "output"`)
+OUTPUT_DIR = config.get('output_dir', 'output')
+import glob, os, re
 
-# Snakemake workflow for RNA-seq analysis
-# Generalized to process multiple samples from a data directory
+FASTQ_DIR = 'data/FASTQ'
 
-import glob
-import os
+# Auto-detect samples from FASTQ directory
+def get_samples_from_fastq_dir():
+    """
+    Detect sample names by inspecting the FASTQ directory structure.
 
-# Load configuration
-configfile: "config.yaml"
+    This project uses FASTQ filenames like
+    "mR480-L1-P01-TAAGGCGA-CTCTCTAT-READ1-Sequences.fastq.gz".
+    We therefore look for files containing "READ1" (or "READ2") and
+    extract the sample prefix to the left of the "-READ" marker.
 
-# Extract configuration variables
-DATA_PATH = config["paths"]["data"]
-TRIMMED_PATH = config["paths"]["trimmed"]
-HISAT2_PATH = config["paths"]["hisat2"]
-ALIGNMENT_SUMMARY_PATH = config["paths"]["alignment_summary"]
-FEATURE_COUNT_PATH = config["paths"]["feature_count"]
-DESEQ2_PATH = config["paths"]["deseq2"]
-SALMON_PATH = config["paths"]["salmon"]
+    Supported layouts:
+    - per-sample subfolders: <FASTQ_DIR>/<sample>/*READ1*.fastq.gz
+    - flat files in FASTQ_DIR: <FASTQ_DIR>/*READ1*.fastq.gz
 
-# Get sample names from FASTQ files in data directory
-FASTQ_FILES = glob.glob(f"{DATA_PATH}/*_r1.fq.gz")
-SAMPLES = [os.path.basename(f).replace("_r1.fq.gz", "") for f in FASTQ_FILES]
+    Returns a sorted list of unique sample names, excluding 'Undetermined'.
+    """
+    # Prefer configured keys; fall back to default
+    paths_cfg = config.get("paths", {})
+    fastq_path = paths_cfg.get("fastqs") or paths_cfg.get("data") or FASTQ_DIR
+    if not os.path.exists(fastq_path):
+        return []
 
-print(f"Found {len(SAMPLES)} samples: {SAMPLES}")
+    samples = set()
 
-# Reference paths
-ADAPTER_PATH = config["references"]["adapters"]
-HISAT2_INDEX = config["references"]["hisat2_index"]
-GTF_PATH = config["references"]["gtf"]
-SALMON_INDEX = config["references"]["salmon_index"]
-TRIMMOMATIC_JAR = config["tools"]["trimmomatic"]
+    # Find all R1 files recursively (covers both flat and subdir layouts)
+    r1_files = glob.glob(os.path.join(fastq_path, "**", "*READ1*.fastq.gz"), recursive=True)
 
-# Rule all - defines final outputs
+    for path in r1_files:
+        basename = os.path.basename(path)
+        if "Undetermined" in basename:
+            continue
+
+        # Prefer the pattern <sample>-...-READ1-...; capture what's before '-READ1'
+        if "-READ1" in basename:
+            name = basename.split("-READ1", 1)[0]
+        elif "_R1_" in basename:
+            # fallback to Illumina-style names
+            name = basename.split("_R1_", 1)[0]
+        else:
+            # last resort: strip lane/read suffixes
+            name = re.sub(r"(.*)(_R?1).*", r"\1", basename)
+
+        # Clean up any trailing separators
+        name = name.rstrip("-_.")
+        if name and name != "Undetermined":
+            samples.add(name)
+
+    return sorted(samples)
+
+
+# Helper used by the fastqc_raw rule to validate sample detection and locate FASTQ
+def fastqc_raw_input(wildcards):
+    detected = get_samples_from_fastq_dir()
+    if detected and wildcards.sample not in detected:
+        raise ValueError(
+            f"Sample '{wildcards.sample}' not found in FASTQ directory. Detected: {detected}"
+        )
+    # locate the FASTQ file for the sample/mate using the detected FASTQ layout
+    return find_fastq_for_sample(wildcards.sample, wildcards.mate)
+
+
+# Locate a FASTQ file for a sample/mate by searching the FASTQ directory.
+def find_fastq_for_sample(sample, mate):
+    paths_cfg = config.get("paths", {})
+    fastq_path = paths_cfg.get("fastqs") or paths_cfg.get("data") or FASTQ_DIR
+    # Try a few variants of the sample name: raw, and cleaned (strip common suffixes
+    # that may have been appended by downstream rules, e.g. '.sorted' or '.sorted.markdupes')
+    candidates = [sample]
+    # remove trailing known suffixes (like .sorted, .sorted.markdupes, .sorted.markdupes.bam etc)
+    cleaned = re.sub(r"(\.sorted(?:\..*)?$)|(\.sorted\..*)$", "", sample)
+    if cleaned != sample:
+        candidates.append(cleaned)
+
+    # Also try stripping any file-extension-like suffix (after first dot)
+    if '.' in sample:
+        base = sample.split('.', 1)[0]
+        if base not in candidates:
+            candidates.append(base)
+
+    for s in candidates:
+        # Use the same matching strategy as sample detection: look for READ1/READ2 markers
+        pattern = os.path.join(fastq_path, "**", f"{s}*READ{mate}*fastq.gz")
+        matches = glob.glob(pattern, recursive=True)
+        if not matches:
+            # fall back to Illumina-style pattern
+            pattern2 = os.path.join(fastq_path, "**", f"{s}*_R{mate}_*.fastq.gz")
+            matches = glob.glob(pattern2, recursive=True)
+        if matches:
+            return sorted(matches)[0]
+
+    # If we reach here, nothing was found; provide a helpful error listing attempted candidates
+    raise ValueError(
+        f"No FASTQ found for sample '{sample}' (tried: {candidates}) mate {mate} in {fastq_path}"
+    )
+
+# Extract sample list and configuration
+# Use auto-detected samples if available, otherwise fall back to config
+auto_samples = get_samples_from_fastq_dir()
+SAMPLES = auto_samples if auto_samples else config.get("samples", [])
+
+
 rule all:
     input:
-        # FastQC reports
-        expand(f"fastqc/{{sample}}_r1_fastqc.html", sample=SAMPLES),
-        expand(f"fastqc/{{sample}}_r2_fastqc.html", sample=SAMPLES),
-        # Trimmed files
-        expand(f"{TRIMMED_PATH}/{{sample}}_trimmed_1P.fq.gz", sample=SAMPLES),
-        expand(f"{TRIMMED_PATH}/{{sample}}_trimmed_2P.fq.gz", sample=SAMPLES),
-        # HISAT2 alignment and counting
-        expand(f"{HISAT2_PATH}/{{sample}}_align_sorted.bam", sample=SAMPLES),
-        expand(f"{HISAT2_PATH}/{{sample}}_align_sorted.bam.bai", sample=SAMPLES),
-        f"{FEATURE_COUNT_PATH}/all_samples_counts.txt",
-        # Salmon quantification
-        expand(f"{SALMON_PATH}/{{sample}}_salmon_quant/{{sample}}_quant.sf", sample=SAMPLES),
-        # MultiQC report
-        "multiqc_report.html",
-        # DESeq2 results
-        f"{DESEQ2_PATH}/deseq2_results.csv",
-        # iSEE app2.R file
-        "isee_uci/shiny-server/test_app/app.R"
+        # expand(f'{OUTPUT_DIR}/mosdepth/{{sample}}.sorted.coverage.txt', sample=SAMPLES),
+        expand(f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.markdupes.bai', sample=SAMPLES),
+        expand(f'{OUTPUT_DIR}/trimmed/{{sample}}_R{{mate}}_val_{{mate}}_fastqc.{{ext}}', sample=SAMPLES, mate=[1, 2], ext=['html', 'zip']),
+        expand(f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted_{{context}}.{{ext}}',
+        #  sample=SAMPLES, context=['CpG'],
+         sample=SAMPLES, context=['CpG', 'CHG', 'CHH'],
+         ext=['bedGraph', 'methylKit'])
 
-# Rule 0: FastQC on raw FASTQ files
-rule fastqc:
+
+# Run fastqc on the raw .fastq.gz files
+rule fastqc_raw:
     input:
-        r1 = f"{DATA_PATH}/{{sample}}_r1.fq.gz",
-        r2 = f"{DATA_PATH}/{{sample}}_r2.fq.gz"
+        fastqc_raw_input
     output:
-        r1_html = f"fastqc/{{sample}}_r1_fastqc.html",
-        r1_zip = f"fastqc/{{sample}}_r1_fastqc.zip",
-        r2_html = f"fastqc/{{sample}}_r2_fastqc.html",
-        r2_zip = f"fastqc/{{sample}}_r2_fastqc.zip"
-    threads: 2
+        f'{OUTPUT_DIR}/fastqc_raw/{{sample}}-READ{{mate}}-Sequences_fastqc.html',
+        f'{OUTPUT_DIR}/fastqc_raw/{{sample}}-READ{{mate}}-Sequences_fastqc.zip'
+    conda: "bsseq"
     resources:
         mem_mb = 4000,
-        cpus = 2,
+        cpus = config["params"]["cpus"],
         partition = "standard",
         account = "sbsandme_lab"
+    params:
+        fastqc_path = config['tools'].get('fastqc_path', 'fastqc'),
+        out_dir = f'{OUTPUT_DIR}/fastqc_raw/'
     shell:
-        """
+        '''
         module load fastqc/0.11.9
-        mkdir -p fastqc
-        fastqc -o fastqc -t {threads} {input.r1} {input.r2}
+        fastqc -o {params.out_dir} {input}
         module unload fastqc/0.11.9
-        """
+        '''
 
-# Rule 1: Trimming with Trimmomatic
+
+# Trim the read pairs using Trimmomatic (replaces Trim Galore)
 rule trimmomatic:
     input:
-        r1 = f"{DATA_PATH}/{{sample}}_r1.fq.gz",
-        r2 = f"{DATA_PATH}/{{sample}}_r2.fq.gz"
+        f'{OUTPUT_DIR}/fastqc_raw/{{sample}}-READ1-Sequences_fastqc.html',
+        f'{OUTPUT_DIR}/fastqc_raw/{{sample}}-READ1-Sequences_fastqc.zip',
+        f'{OUTPUT_DIR}/fastqc_raw/{{sample}}-READ2-Sequences_fastqc.html',
+        f'{OUTPUT_DIR}/fastqc_raw/{{sample}}-READ2-Sequences_fastqc.zip',
+        R1 = lambda wildcards: find_fastq_for_sample(wildcards.sample, 1),
+        R2 = lambda wildcards: find_fastq_for_sample(wildcards.sample, 2)
     output:
-        r1_paired = f"{TRIMMED_PATH}/{{sample}}_trimmed_1P.fq.gz",
-        r1_unpaired = f"{TRIMMED_PATH}/{{sample}}_trimmed_1U.fq.gz",
-        r2_paired = f"{TRIMMED_PATH}/{{sample}}_trimmed_2P.fq.gz",
-        r2_unpaired = f"{TRIMMED_PATH}/{{sample}}_trimmed_2U.fq.gz"
-    params:
-        adapter_path = ADAPTER_PATH,
-        trimmed_base = f"{TRIMMED_PATH}/{{sample}}_trimmed.fq.gz"
+        pair1 = f'{OUTPUT_DIR}/trimmed/{{sample}}_R1_val_1.fq.gz',
+        report1 = f'{OUTPUT_DIR}/trimmed/{{sample}}_R1.fastq.gz_trimming_report.txt',
+        pair2 = f'{OUTPUT_DIR}/trimmed/{{sample}}_R2_val_2.fq.gz',
+        report2 = f'{OUTPUT_DIR}/trimmed/{{sample}}_R2.fastq.gz_trimming_report.txt'
+    conda: "bsseq"
     threads: 8
     resources:
         mem_mb = 4000,
         cpus = config["params"]["cpus"],
         partition = "standard",
         account = "sbsandme_lab"
-    shell:
-        """
-
-        java -jar {TRIMMOMATIC_JAR} PE \
-        -threads {threads} -phred33 \
-        -baseout {params.trimmed_base} \
-        {input.r1} {input.r2} \
-        ILLUMINACLIP:{params.adapter_path}:{config[params][trimmomatic][illuminaclip]} \
-        SLIDINGWINDOW:{config[params][trimmomatic][sliding_window]} \
-        MINLEN:{config[params][trimmomatic][min_length]}
-
-        """
-
-# Rule 2: HISAT2 alignment
-rule hisat2_align:
-    input:
-        r1 = f"{TRIMMED_PATH}/{{sample}}_trimmed_1P.fq.gz",
-        r2 = f"{TRIMMED_PATH}/{{sample}}_trimmed_2P.fq.gz"
-    output:
-        bam = f"{HISAT2_PATH}/{{sample}}_align.bam",
-        summary = f"{ALIGNMENT_SUMMARY_PATH}/{{sample}}_summary.align"
     params:
-        hisat2_index = HISAT2_INDEX,
-        summary_path = ALIGNMENT_SUMMARY_PATH
-    threads: 8
-    resources:
-        mem_mb = 24000,
-        cpus = config["params"]["cpus"],
-        partition = "standard",
-        account = "sbsandme_lab"
+        trimmomatic_jar = config['tools'].get('trimmomatic'),
+        adapters = config.get('references', {}).get('adapters'),
+        illumina_clip = config.get('params', {}).get('trimmomatic', {}).get('illuminaclip'),
+        sliding_window = config.get('params', {}).get('trimmomatic', {}).get('sliding_window'),
+        min_length = config.get('params', {}).get('trimmomatic', {}).get('min_length')
     shell:
-        """
-        module load hisat2/2.2.1
-        module load samtools/1.10
-        
-        hisat2 -p {threads} -t --qc-filter --rna-strandness {config[params][hisat2][rna_strandness]} \
-        --summary-file {output.summary} \
-        -x {params.hisat2_index} --dta-cufflinks \
-        -1 {input.r1} -2 {input.r2} | \
-        samtools view -@ {threads} -bS > {output.bam}
-        
-        module unload samtools/1.10
-        module unload hisat2/2.2.1
-        """
+        '''
+        # Run Trimmomatic PE and capture its stderr (which includes the summary) into report1
+        java -jar {params.trimmomatic_jar} PE -threads {threads} \
+            {input.R1} {input.R2} \
+            {output.pair1}.tmp {output.pair1}.unpaired.tmp {output.pair2}.tmp {output.pair2}.unpaired.tmp \
+            ILLUMINACLIP:{params.adapters}:{params.illumina_clip} \
+            SLIDINGWINDOW:{params.sliding_window} MINLEN:{params.min_length} \
+            2> {output.report1}
 
-# Rule 3: Sort and index BAM file
-rule sort_bam:
+        # Compress paired outputs to match expected .fq.gz filenames
+        gzip -c {output.pair1}.tmp > {output.pair1}
+        gzip -c {output.pair2}.tmp > {output.pair2}
+
+        # Mirror the report for R2 so downstream rules that expect two report files still work
+        cp {output.report1} {output.report2}
+
+        # Clean up temporary files
+        rm -f {output.pair1}.tmp {output.pair2}.tmp {output.pair1}.unpaired.tmp {output.pair2}.unpaired.tmp
+        '''
+
+
+# Run fastqc on the trimmmed reads
+rule fastqc_trimmmed:
     input:
-        bam = f"{HISAT2_PATH}/{{sample}}_align.bam"
+        f'{OUTPUT_DIR}/trimmed/{{sample}}_R{{mate}}.fastq.gz_trimming_report.txt',
+        fq_gz = f'{OUTPUT_DIR}/trimmed/{{sample}}_R{{mate}}_val_{{mate}}.fq.gz'
     output:
-        sorted_bam = f"{HISAT2_PATH}/{{sample}}_align_sorted.bam",
-        index = f"{HISAT2_PATH}/{{sample}}_align_sorted.bam.bai"
-    threads: 8
-    resources:
-        mem_mb = 24000,
-        cpus = config["params"]["cpus"],
-        partition = "standard",
-        account = "sbsandme_lab"
-    shell:
-        """
-        module load samtools/1.10
-        
-        samtools sort -@ {threads} -o {output.sorted_bam} {input.bam}
-        samtools index -@ {threads} {output.sorted_bam}
-        
-        module unload samtools/1.10
-        """
-
-
-# Rule 4: Feature counting (all samples together)
-rule feature_counts_all:
-    input:
-        bam_files = expand(f"{HISAT2_PATH}/{{sample}}_align_sorted.bam", sample=SAMPLES)
-    output:
-        counts = f"{FEATURE_COUNT_PATH}/all_samples_counts.txt"
-    params:
-        gtf_path = GTF_PATH
-    threads: 4
-    resources:
-        mem_mb = 24000,
-        cpus = 4,
-        partition = "standard",
-        account = "sbsandme_lab"
-    shell:
-        """
-        module load subread/2.0.1
-        featureCounts -s {config[params][feature_counts][strandness]} -p -t exon -g gene_id -T {threads} \
-        -a {params.gtf_path} \
-        -o {output.counts} {input.bam_files}
-        module unload subread/2.0.1
-        """
-
-
-# Rule 5: Salmon quantification
-rule salmon_quant:
-    input:
-        r1 = f"{TRIMMED_PATH}/{{sample}}_trimmed_1P.fq.gz",
-        r2 = f"{TRIMMED_PATH}/{{sample}}_trimmed_2P.fq.gz"
-    output:
-        quant = f"{SALMON_PATH}/{{sample}}_salmon_quant/{{sample}}_quant.sf"
-    params:
-        salmon_index = SALMON_INDEX,
-        output_dir = f"{SALMON_PATH}/{{sample}}_salmon_quant",
-        temp_quant = f"{SALMON_PATH}/{{sample}}_salmon_quant/quant.sf"
-    threads: 8
-    resources:
-        mem_mb = 24000,
-        cpus = config["params"]["cpus"],
-        partition = "standard",
-        account = "sbsandme_lab"
-    shell:
-        """
-        module load salmon/1.8.0
-        
-        salmon quant -i {params.salmon_index} -l {config[params][salmon][library_type]} \
-        -1 {input.r1} -2 {input.r2} \
-        -p {threads} --validateMappings --gcBias \
-        -o {params.output_dir}
-        
-        # Rename the quant.sf file
-        mv {params.temp_quant} {output.quant}
-        
-        module unload salmon/1.8.0
-        """
-
-
-# Rule 6: MultiQC report
-rule multiqc:
-    input:
-        expand(f"{TRIMMED_PATH}/{{sample}}_trimmed_1P.fq.gz", sample=SAMPLES),
-        expand(f"{TRIMMED_PATH}/{{sample}}_trimmed_2P.fq.gz", sample=SAMPLES),
-        expand(f"{HISAT2_PATH}/{{sample}}_align_sorted.bam", sample=SAMPLES),
-        expand(f"{FEATURE_COUNT_PATH}/{{sample}}_counts.txt", sample=SAMPLES),
-        expand(f"{SALMON_PATH}/{{sample}}_salmon_quant/{{sample}}_quant.sf", sample=SAMPLES)
-    output:
-        report = "multiqc_report.html"
-    threads: 2
+        f'{OUTPUT_DIR}/trimmed/{{sample}}_R{{mate}}_val_{{mate}}_fastqc.html',
+        f'{OUTPUT_DIR}/trimmed/{{sample}}_R{{mate}}_val_{{mate}}_fastqc.zip'
+    conda: "bsseq"
     resources:
         mem_mb = 4000,
-        cpus = 2,
+        cpus = config["params"]["cpus"],
         partition = "standard",
         account = "sbsandme_lab"
-    shell:
-        """
-        module load singularity/3.11.3
-        singularity run /dfs9/ucightf-lab/kstachel/TOOLS/multiqc-1.20.sif multiqc . -o .
-        module unload singularity/3.11.3
-        """
-    
-# Rule 7: DESeq2 differential expression analysis
-rule deseq2:
-    input:
-        counts = f"{FEATURE_COUNT_PATH}/all_samples_counts.txt",
-        metadata = config["deseq2"]["metadata"]
-    output:
-        results = f"{DESEQ2_PATH}/deseq2_results.csv",
-        rds = f"{DESEQ2_PATH}/dds.rds"
     params:
-        out_dir = f"{DESEQ2_PATH}",
-        deseq2_condition = config["isee_app"]["condition"],
-        group_a = config["isee_app"]["group_a"],
-        group_b = config["isee_app"]["group_b"]
-    threads: 1
-    resources:
-        mem_mb = 8000,
-        cpus = 1,
-        partition = "standard",
-        account = "sbsandme_lab"
+        fastqc_path = config['tools'].get('fastqc_path', 'fastqc'),
+        out_dir = f'{OUTPUT_DIR}/trimmed/'
     shell:
-        """
-        module load R/4.2.2
-        Rscript deseq2_analysis.R {input.counts} {input.metadata} \
-        {params.out_dir} {params.deseq2_condition} {params.group_a} {params.group_b}
-        module unload R/4.2.2
-        cp {output.rds} isee_uci/shiny-server/test_app/dds.rds
-        """
+        '''
+        module load fastqc/0.11.9
+        fastqc -o {params.out_dir} {input.fq_gz}
+        module unload fastqc/0.11.9
+        '''
 
-# Rule 8: Generate parametric iSEE app2.R file
-rule generate_isee_app:
+
+# Align to the reference
+rule bismark_align:
     input:
-        template = "templates/app.R.template",
-        dds = f"{DESEQ2_PATH}/dds.rds"
+        R1 = f'{OUTPUT_DIR}/trimmed/{{sample}}_R1_val_1.fq.gz',
+        R2 = f'{OUTPUT_DIR}/trimmed/{{sample}}_R2_val_2.fq.gz'
     output:
-        app = "isee_uci/shiny-server/test_app/app.R"
+        f'{OUTPUT_DIR}/bismark/{{sample}}_R1_val_1_bismark_bt2_pe.bam'
+    threads: 8
+    conda: "bsseq"
+    resources:
+        mem_mb = 32000,
+        cpus = config["params"]["cpus"],
+        partition = "standard",
+        account = "sbsandme_lab"
     params:
-        deseq2_condition = config["isee_app"]["condition"],
-        group_a = config["isee_app"]["group_a"],
-        group_b = config["isee_app"]["group_b"]
+        bismark_path = config['tools'].get('bismark_path', 'bismark'),
+        genome_dir = config["bismark_genome"],
+        output_dir = f'{OUTPUT_DIR}/bismark/'
     shell:
-        """
-        # Create the output directory if it doesn't exist
-        mkdir -p $(dirname {output.app})
-        
-        # Replace placeholders in template with actual parameters
-        sed -e 's|{{DESEQ2_CONDITION}}|{params.deseq2_condition}|g' \
-            -e 's|{{GROUP_A}}|{params.group_a}|g' \
-            -e 's|{{GROUP_B}}|{params.group_b}|g' \
-            {input.template} > {output.app}
-        """
+        '''
+        module load samtools/1.15.1
+        module load bismark/0.23.1
+        # Run Bismark paired-end alignment using Bowtie2 and write output to a temporary folder
+        bismark -p {threads} {params.genome_dir} \
+            -1 {input.R1} -2 {input.R2} --output_dir {params.output_dir}
+        module unload samtools/1.15.1
+        module unload bismark/0.23.1
+        '''
+
+
+# Sort the output files
+rule samtools_sort:
+    input:
+        f'{OUTPUT_DIR}/bismark/{{sample}}_R1_val_1_bismark_bt2_pe.bam'
+    output:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.bam'
+    threads:
+        config['samtools_sort']['threads']
+    conda: "bsseq"
+    resources:
+        mem_mb = 4000,
+        cpus = config["params"]["cpus"],
+        partition = "standard",
+        account = "sbsandme_lab"
+    params:
+        mem = config['samtools_sort']['mem']
+    shell:
+        '''
+        module load samtools/1.15.1
+        samtools sort \
+        -@ {threads} \
+        -m {params.mem} \
+        -O BAM \
+        -T {input}.samtools_sort.tmp \
+        -o {output} \
+        {input}
+        module unload samtools/1.15.1
+        '''
+
+
+# Add or replace read groups using Picard so downstream tools have RG tags
+rule add_read_groups:
+    input:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.bam'
+    output:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.rg.bam'
+    conda: "bsseq"
+    resources:
+        mem_mb = 4000,
+        cpus = config["params"]["cpus"],
+        partition = "standard",
+        account = "sbsandme_lab"
+    params:
+        PICARD_BINARY = config['tools'].get('picard_path')
+    shell:
+        '''
+        java -jar {params.PICARD_BINARY} AddOrReplaceReadGroups \
+        -I {input} \
+        -O {output} \
+        -RGID 1 \
+        -RGLB lib1 \
+        -RGPL ILLUMINA \
+        -RGPU unit1 \
+        -RGSM {wildcards.sample}
+        '''
+
+
+# Mark potential PCR duplicates with Picard Tools
+rule mark_dupes:
+    input:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.rg.bam'
+    output:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.markdupes.bam'
+    conda: "bsseq"
+    threads: 8
+    resources:
+        mem_mb = 48000,
+        cpus = config["params"]["cpus"],
+        partition = "standard",
+        account = "sbsandme_lab"
+    log:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.markdupes.log'
+    params:
+        PICARD_BINARY = config['tools']['picard_path']
+    shell:
+        '''
+        module load samtools/1.15.1
+        java -jar {params.PICARD_BINARY} MarkDuplicates \
+        -I {input} \
+        -O {output} \
+        -M {log}
+        module unload samtools/1.15.1
+        '''
+
+
+rule samtools_index:
+    input:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.markdupes.bam'
+    output:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.markdupes.bai'
+    threads:
+        config['samtools_index']['threads']
+    conda: "bsseq"
+    resources:
+        mem_mb = 4000,
+        cpus = config["params"]["cpus"],
+        partition = "standard",
+        account = "sbsandme_lab"
+    shell:
+        '''
+        module load samtools/1.15.1
+        samtools index \
+        -@ {threads} \
+        -b \
+        {input} \
+        {output}
+        module unload samtools/1.15.1
+        '''
+
+
+# Run MethylDackel to get the inclusion bounds for methylation calling
+rule methyldackel_mbias:
+    input:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.markdupes.bai',
+        bam = f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.markdupes.bam',
+    output:
+        f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted_OB.svg',
+        # f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted_OT.svg',
+        mbias = f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted.mbias'
+    threads:
+        config['methyldackel']['threads']
+    conda: "bsseq"
+    resources:
+        mem_mb = 32000,
+        cpus = config["params"]["cpus"],
+        partition = "standard",
+        account = "sbsandme_lab"
+    params:
+        out_prefix = f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted',
+        genome = REFERENCE_GENOME
+    shell:
+        '''
+        MethylDackel mbias \
+        --CHG \
+        --CHH \
+        -@ {threads} \
+        {params.genome} \
+        ./{input.bam} \
+        ./{params.out_prefix} \
+        2> ./{output.mbias}
+        '''
+
+
+# Run MethylDackel to extract cytosine stats
+rule methyldackel_extract:
+    input:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.markdupes.bai',
+        bam = f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.markdupes.bam',
+        mbias = f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted.mbias'
+    output:
+        f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted_CpG.bedGraph',
+        f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted_CHG.bedGraph',
+        f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted_CHH.bedGraph',
+        f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted_CpG.methylKit',
+        f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted_CHG.methylKit',
+        f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted_CHH.methylKit'
+    threads:
+        config['methyldackel']['threads']
+    conda: "bsseq"
+    resources:
+        mem_mb = 4000,
+        cpus = config["params"]["cpus"],
+        partition = "standard",
+        account = "sbsandme_lab"
+    params:
+        out_prefix = f'{OUTPUT_DIR}/methyldackel/{{sample}}.sorted',
+        genome = REFERENCE_GENOME
+    shell:
+        '''
+        # Get bounds for inclusion from the .mbias files
+
+        OB=$(cut -d ' ' -f 5 {input.mbias})
+        # OT=$(cut -d ' ' -f 7 {input.mbias})
+
+        # Get a MethylKit compatible file
+
+        MethylDackel extract \
+        --CHG \
+        --CHH \
+        --OB $OB \
+        --methylKit \
+        -@ {threads} \
+        -o {params.out_prefix} \
+        {params.genome} \
+        {input.bam}
+
+                MethylDackel extract \
+        --CHG \
+        --CHH \
+        --OB $OB \
+        -@ {threads} \
+        -o {params.out_prefix} \
+        {params.genome} \
+        {input.bam}
+        '''
+
+
+# Get the depth for each sample
+rule mosdepth:
+    input:
+        f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.bai',
+        bam = f'{OUTPUT_DIR}/bismark/{{sample}}.sorted.bam'
+    output:
+        f'{OUTPUT_DIR}/mosdepth/{{sample}}.sorted.mosdepth.global.dist.txt',
+        f'{OUTPUT_DIR}/mosdepth/{{sample}}.sorted.mosdepth.summary.txt',
+        f'{OUTPUT_DIR}/mosdepth/{{sample}}.sorted.per-base.bed.gz',
+        f'{OUTPUT_DIR}/mosdepth/{{sample}}.sorted.per-base.bed.gz.csi'
+    threads:
+        config['mosdepth']['threads']
+    conda: "bsseq"
+    resources:
+        mem_mb = 4000,
+        cpus = config["params"]["cpus"],
+        partition = "standard",
+        account = "sbsandme_lab"
+    params:
+        mapping_quality = config['mosdepth']['mapping_quality'],
+        mosdepth_path = config['tools']['mosdepth_path'],
+        out_prefix = f'{OUTPUT_DIR}/mosdepth/{{sample}}.sorted'
+    shell:
+        '''
+        {params.mosdepth_path} \
+        -x \
+        -t {threads} \
+        -Q {params.mapping_quality} \
+        {params.out_prefix} \
+        {input.bam}
+        '''
+
+
+# Calculate the coverage from the mosdepth output
+rule calc_coverage:
+    input:
+        bed = f'{OUTPUT_DIR}/mosdepth/{{sample}}.sorted.per-base.bed.gz'
+    output:
+        f'{OUTPUT_DIR}/mosdepth/{{sample}}.sorted.coverage.txt'
+    conda: "bsseq"
+    resources:
+        mem_mb = 4000,
+        cpus = config["params"]["cpus"],
+        partition = "standard",
+        account = "sbsandme_lab"
+    params:
+        genome = REFERENCE_GENOME
+    shell:
+        '''
+        src/mosdepth_to_x_coverage.py \
+        -f {params.genome} \
+        -m {input.bed} \
+        > {output}
+        '''

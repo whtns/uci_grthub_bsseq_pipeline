@@ -1,8 +1,55 @@
-# Configuration file for RNA-seq Snakemake workflow
+# Author: Jeffrey Grover
+# Purpose: Config file to edit before running the WGBS workflow Snakefile
+# Created: 2019-05-22
 
-# Input/Output paths
+# Global variables used for multiple rules
+
+samples:
+    - Sample1
+    - Sample2
+    - etc...
+    # Samples should be reported by ID rather than filenames, and exclude the
+    # trailing "R1" and "R2", one sample ID per pair. If samples are supplied as
+    # separate .fastq.gz files within each pair concatenate them to a single R1 and
+    # R2 file prior to running.
+
+reference_genome:
+    /dfs9/ucightf-lab/projects/SmitQ/251103_1125Bio-13_SmitQ_BSseq/data/targeted_reference/targeted_reference.fa
+    # Path to a reference genome here with .fasta extension
+    # If indexed, then the index will not be regenerated
+
+
+# Options for individual workflow steps
+# Configure threads for each step as desired, this is a sane starting point
+
+trim_galore:
+    adapter_seq : AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC
+    quality : 20
+
+bwameth:
+    threads : 10
+    
+samtools_sort:
+    threads : 5
+    mem : 4G
+
+samtools_index:
+    threads : 5
+
+methyldackel:
+    threads : 5
+
+mosdepth:
+    threads : 5
+    mapping_quality : 10
+
+
+# Paths to individual tools
+# You probably don't need to change this unless programs are not in your $PATH
+# Picard sometimes needs an alias to java -jar /install_dir/picard.jar
+
 paths:
-  data: "/dfs9/ucightf-lab/kstachel/test_Data"  # Directory containing FASTQ files with pattern {sample}_R1_001.fastq.gz and {sample}_R2_001.fastq.gz
+  data: "data/FASTQ"  # Directory containing FASTQ files with pattern {sample}_R1_001.fastq.gz and {sample}_R2_001.fastq.gz
   trimmed: "output/trimmed_fastq"
   hisat2: "output/hisat2_alignment"
   alignment_summary: "output/hisat2_alignment/alignment_summary"
@@ -20,6 +67,15 @@ references:
 # Tool paths
 tools:
   trimmomatic: "/dfs9/ucightf-lab/kstachel/TOOLS/Trimmomatic-0.39/trimmomatic-0.39.jar"
+  fastqc_path : fastqc
+  bwameth_path : /data/homezvol1/kstachel/.local/bin/bwameth.py
+  bismark_path: bismark
+  samtools_path : samtools
+  methyldackel_path : ~/.conda/envs/bsseq/bin/MethylDackel
+  mosdepth_path : ~/.conda/envs/bsseq/bin/mosdepth
+  picard_path: /opt/apps/picard-tools/3.3.0/picard.jar
+
+bismark_genome: /dfs9/ucightf-lab/projects/SmitQ/251103_1125Bio-13_SmitQ_BSseq/data/targeted_reference
 
 # Parameters
 params:
