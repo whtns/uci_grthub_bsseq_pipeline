@@ -1,0 +1,11 @@
+[workspace]
+name = "kidney-methylation"
+version = "0.1.0"
+description = "Kidney methylation analysis using bisulfite sequencing"
+channels = ["conda-forge", "bioconda"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.10.*"
+methyldackel = "0.6.1.*"
+mosdepth = "0.3.11.*"

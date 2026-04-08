@@ -16,14 +16,14 @@ Most recent tested versions indicated. Though, more recent versions and slightly
 older ones are likely a-okay!
 
 1. [Trim Galore!](https://www.bioinformatics.babraham.ac.uk/projects/trim_galore/) v0.6.4
-2. [FastQC](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/) v0.11.8
-3. [bwa-meth](https://github.com/brentp/bwa-meth) v0.2.2
-4. [samtools](https://www.htslib.org/) v1.9
-5. [Picard Tools](https://broadinstitute.github.io/picard/) v2.22.3
-6. [MethylDackel](https://github.com/dpryan79/MethylDackel) v0.4
-7. [Mosdepth](https://github.com/brentp/mosdepth) v0.2.9
-8. [Snakemake](https://snakemake.readthedocs.io) v5.14.0
-9. [Python3](https://www.python.org/) v3.5
+2. [FastQC](https://www.bioinformatics.babraham.ac.uk/projects/fastqc/) 
+3. [bwa-meth](https://github.com/brentp/bwa-meth) 
+4. [samtools](https://www.htslib.org/) 
+5. [Picard Tools](https://broadinstitute.github.io/picard/)
+6. [MethylDackel](https://github.com/dpryan79/MethylDackel)
+7. [Mosdepth](https://github.com/brentp/mosdepth) 
+8. [Snakemake](https://snakemake.readthedocs.io) 
+9. [Python3](https://www.python.org/) 
 
 ## Quick-Start Guide
 Firstly, download all the dependencies and make sure they're in your $PATH (that
@@ -100,10 +100,7 @@ assembly.
 
 While it is possible to determine this by calling C -> T SNPs against a reference
 there is purpose-built software for this task. The most common aligner for WGBS
-is currently [Bismark](https://www.bioinformatics.babraham.ac.uk/projects/bismark/),
-and in our testing it performed well. However, we decided to use a slightly
-different pipeline for the purposes of our work in the
-[Mosher Lab](https://cals.arizona.edu/research/mosherlab/Mosher_Lab/Home.html).
+is currently [Bismark](https://www.bioinformatics.babraham.ac.uk/projects/bismark/), and in our testing it performed well. 
 The pipeline we settled on is a combination of open source tools built around
 bwameth for alignment and MethylDackel for methylation calling. In our experience
 this pipeline was many times faster and resulted in a marginally higher mapping
@@ -123,10 +120,3 @@ incomplete trimming.
 
 At the conclusion of the pipeline overall fold-coverage is calculated using the
 very fast Mosdepth tool from Brent Pedersen and some python scripts.
-
-## Citing the Workflow
-Please do cite us! The included Zenodo DOI is the easiest way. Additionally, you
-should consider citing the paper in which we first used this workflow:
-
-Grover JW *et al*. Abundant expression of maternal siRNAs is a conserved feature of seed development. 2020.
-PNAS. https://doi.org/10.1073/pnas.2001332117

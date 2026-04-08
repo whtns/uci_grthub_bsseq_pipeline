@@ -16,3 +16,4 @@ output_ks/
 output_melisa/
 *.fa
 *.txt
+.codetree/
