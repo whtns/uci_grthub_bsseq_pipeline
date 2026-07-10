@@ -27,11 +27,22 @@ older ones are likely a-okay!
 
 ## Quick-Start Guide
 Firstly, download all the dependencies and make sure they're in your $PATH (that
-you can run them from a BASH prompt). Then clone the github repo:
+you can run them from a BASH prompt). Then clone the repo:
 
 ```shell
-git clone https://github.com/groverj3/wgbs_snakemake.git
+git clone https://github.com/uci-grthub/uci_grthub_bsseq_pipeline.git
+cd uci_grthub_bsseq_pipeline
 ```
+
+MethylDackel and Mosdepth are pinned in `pixi.toml` and can be installed with
+[pixi](https://pixi.sh) instead of managing them manually:
+
+```shell
+pixi install
+```
+
+The remaining dependencies (Trim Galore!, FastQC, bwa-meth, samtools, Picard
+Tools, Snakemake) still need to be on your `$PATH` separately.
 
 Edit the config.yaml file to include your sample IDs (fastq filenames,
 excluding extensions, pair numbers, lane info, etc.) and a reference genome
